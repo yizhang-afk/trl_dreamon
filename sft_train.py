@@ -90,96 +90,6 @@ class CustomDataCollator:
             "loss_mask": loss_mask,
             "t": t,
         }
-def compute_loss_func(
-    outputs,
-    labels,
-    num_items_in_batch: int = None,
-):
-    """
-    自定义loss计算函数，用于Trainer.compute_loss中调用。
-
-    Args:
-        outputs (dict or ModelOutput): 模型forward输出，一般包含 logits。
-        labels (torch.Tensor): 真实标签。
-        num_items_in_batch (int, optional): 当前batch样本数，可用于归一化或logging。
-    Returns:
-        torch.Tensor: 标量loss
-    """
-    """自定义损失计算，使用loss_mask"""
-    labels = inputs.get("labels")
-    loss_mask = inputs.get("loss_mask")
-    input_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
-    position_ids = inputs["position_ids"]
-    
-    # --- 处理 attention_mask ---
-    if attention_mask.dim() == 2:
-        # (B, S) -> (B, 1, S, S)
-        attention_mask = torch.logical_and(
-            attention_mask.unsqueeze(1).unsqueeze(-2),
-            attention_mask.unsqueeze(1).unsqueeze(-1)
-        )
-    elif attention_mask.dim() == 3:
-        # (B, S, S) -> (B, 1, S, S)
-        attention_mask = attention_mask.unsqueeze(1)
-    else:
-        raise ValueError(f"Unsupported attention_mask shape: {attention_mask.shape}")
-    
-    # 前向传播
-    # --- 前向传播 ---
-    outputs = model(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        use_cache=False
-    )
-    logits = outputs.logits
-    shift_logits = torch.cat([logits[:, 0:1], logits[:, :-1]], dim=1).contiguous()
-    shift_labels = labels.contiguous()
-    loss_fct = nn.CrossEntropyLoss(reduction="none")
-    loss = loss_fct(
-        shift_logits.view(-1, shift_logits.size(-1)),
-        shift_labels.view(-1)
-    )
-
-    loss_mask = loss_mask.reshape(-1)
-    loss = loss.masked_fill(~loss_mask, 0)
-
-    # focal 加权
-    alpha = 0.25
-    gamma = 2
-    loss = (
-                alpha
-                * (1 - torch.exp(-loss)) ** gamma
-                * loss
-            )
-    # time 线性加权
-    weight = 1 - t.float().expand(labels.size())
-    loss = loss * weight.reshape(-1)
-    
-    # eos token的降权
-    non_eos_mask = (shift_labels != self.tokenizer.eos_token_id) & loss_mask
-    non_eos_loss = loss.clone()  
-    non_eos_loss[~non_eos_mask] = 0  
-    non_eos_count = non_eos_mask.sum().item() 
-    non_eos_loss = non_eos_loss.sum()  
-
-    
-    eos_mask = (shift_labels == self.tokenizer.eos_token_id) & loss_mask
-    eos_loss = loss.clone()  
-    eos_loss[~eos_mask] = 0  
-    eos_count = eos_mask.sum().item()  
-    eos_loss = eos_loss.sum() / eos_count  
-
-    
-    loss = (non_eos_loss + eos_loss) / (non_eos_count + 1)
-
-    # num_items_in_batch = inputs["input_ids"].size(0)
-    if num_items_in_batch:
-        loss = loss / num_items_in_batch
-
-    return loss
-
 # 自定义训练器类
 class CustomTrainer(Trainer):
     def __init__(self, *args, **kwargs):
@@ -193,7 +103,6 @@ class CustomTrainer(Trainer):
         attention_mask = inputs["attention_mask"]
         position_ids = inputs["position_ids"]
         t = inputs["t"]
-        
         # --- 处理 attention_mask ---
         if attention_mask.dim() == 2:
             # (B, S) -> (B, 1, S, S)
@@ -256,10 +165,9 @@ class CustomTrainer(Trainer):
         
         loss = (non_eos_loss + eos_loss) / (non_eos_count + 1)
 
-        num_items_in_batch = inputs["input_ids"].size(0)
-        if num_items_in_batch:
-            loss = loss / num_items_in_batch
-        
+        # num_items_in_batch = inputs["input_ids"].size(0)
+        # if num_items_in_batch:
+            # loss = loss / num_items_in_batch
         return (loss, outputs) if return_outputs else loss
 class DreamCoderTrainer:
     def __init__(
@@ -513,9 +421,9 @@ class DreamCoderTrainer:
 def main():
     """主函数"""
     # 配置参数
-    model_name_or_path = "/Users/lris/Desktop/HIT/鲸鱼科技/dreamOn/sft_training/model/Dream-Coder-v0-Base-7B"
-    train_data_path = "/Users/lris/Desktop/HIT/鲸鱼科技/trl/data/opencoder-stage2-edu/train_data.parquet"
-    eval_data_path = "/Users/lris/Desktop/HIT/鲸鱼科技/trl/data/opencoder-stage2-edu/eval_data.parquet"
+    model_name_or_path = "Dream-org/Dream-Coder-v0-Base-7B"
+    train_data_path = "data/opencoder-stage2-edu/train_data.parquet"
+    eval_data_path = "sdata/opencoder-stage2-edu/eval_data.parquet"
     output_dir = "./dreamcoder_sft_output"
     
     # 创建训练器
@@ -525,15 +433,15 @@ def main():
         eval_data_path=eval_data_path,
         output_dir=output_dir,
         max_length=1024,
-        batch_size=2,  # 根据GPU显存调整
+        batch_size=32,  # 根据GPU显存调整
         gradient_accumulation_steps=8,  # 有效批次大小 = 2 * 8 = 16
         learning_rate=1e-5,
         num_train_epochs=3,
         warmup_ratio=0.1,
         weight_decay=0.01,
-        save_steps=100,
-        eval_steps=100,
-        logging_steps=100,
+        save_steps=20,
+        eval_steps=10,
+        logging_steps=1,
         save_total_limit=3,
         dataloader_num_workers=4,
     )

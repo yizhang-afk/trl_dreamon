@@ -47,7 +47,8 @@ def main():
     filtered_dataset = filtered_dataset.shuffle(seed=42)
     
     eval_size = 1000
-    total_size = len(filtered_dataset)
+    # total_size = len(filtered_dataset)
+    total_size = 31000
     if total_size < eval_size:
         print(f"Warning: Only {total_size} samples available. Using all for training.")
         train_dataset = filtered_dataset
